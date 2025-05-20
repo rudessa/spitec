@@ -1,0 +1,97 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  stop_app:
+    name: Stop Application
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Stop application if running
+        run: |
+          if [ -f "/tmp/gunicorn.pid" ]; then
+            echo "Found existing PID file, stopping application..."
+            kill -9 $(cat /tmp/gunicorn.pid) || true
+            rm /tmp/gunicorn.pid
+          else
+            echo "No running application found."
+          fi
+
+  install_deps:
+    name: Install Dependencies
+    runs-on: ubuntu-22.04
+    needs: stop_app
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install system dependencies for h5py
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Install project dependencies via Poetry
+        run: poetry install --all-extras
+
+  start_app:
+    name: Start Application
+    runs-on: ubuntu-22.04
+    needs: install_deps
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install project dependencies via Poetry
+        run: poetry install --all-extras
+
+      - name: Create logging directory if not exists
+        run: |
+          mkdir -p logging
+
+      - name: Create /var/spitec/data
+        run: |
+          sudo mkdir -p /var/spitec/data
+          sudo chown $USER:$USER /var/spitec /var/spitec/data
+
+      - name: Start application via Waitress
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          nohup poetry run python wsgi.py > ./logging/log.txt 2>&1 &
+          COUNTER=0
+          while ! lsof -i :8050 > /dev/null; do
+            if [ $COUNTER -ge 15 ]; then
+              echo "Port 8050 is not in use. Exiting with failure."
+              cat ./logging/log.txt || echo "No log file"
+              exit 1
+            fi
+            sleep 1
+            COUNTER=$((COUNTER+1))
+          done
+          echo "Application started successfully."
+          
+      - name: Show application log on failure
+        if: failure()
+        run: |
+          echo "=== Application Log ==="
+          cat ./logging/log.txt || echo "Log file not found"

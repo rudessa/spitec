@@ -1,0 +1,20 @@
+version: '3'
+
+services:
+  spitec:
+    build: .
+    ports:
+      - "8050:8050"
+    volumes:
+      - spitec_data:/var/spitec/data
+      - cache_data:/app/cache
+      - log_data:/app/logging
+    restart: unless-stopped
+
+volumes:
+  spitec_data:
+    driver: local
+  cache_data:
+    driver: local
+  log_data:
+    driver: local
